@@ -15,7 +15,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080"],  # or ["*"] for all origins (not recommended in production)
+    allow_origins=["http://localhost:8080"],  # or ["*"] in dev (but not prod)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,7 +23,7 @@ app.add_middleware(
 
 class DownloadRequest(BaseModel):
     url: str
-    user_id: str  # Unique user UID from Supabase Auth
+    user_id: str
 
 @app.post("/download-mp3")
 def download_mp3(data: DownloadRequest):
@@ -31,6 +31,8 @@ def download_mp3(data: DownloadRequest):
     user_id = data.user_id
     output_dir = "./temp"
     os.makedirs(output_dir, exist_ok=True)
+
+    cookies_path = "./youtube_cookies.txt"  # 👈 Make sure this file exists on your Render server
 
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -47,6 +49,7 @@ def download_mp3(data: DownloadRequest):
         ],
         'quiet': True,
         'noplaylist': True,
+        'cookiefile': cookies_path,  # 👈 Use cookies here
     }
 
     try:
@@ -56,14 +59,18 @@ def download_mp3(data: DownloadRequest):
             title = info.get("title")
             final_filename = os.path.basename(filename)
 
-        # Upload to user-specific folder in private bucket
         file_path = os.path.join(output_dir, final_filename)
         storage_path = f"{user_id}/{final_filename}"
 
         with open(file_path, "rb") as f:
-            supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, f, {"content-type": "audio/mpeg", "x-upsert": "true"})
+            supabase.storage.from_(SUPABASE_BUCKET).upload(
+                storage_path, f,
+                {
+                    "content-type": "audio/mpeg",
+                    "x-upsert": "true"
+                }
+            )
 
-        # Generate signed URL (valid for 24 hours)
         signed_url_data = supabase.storage.from_(SUPABASE_BUCKET).create_signed_url(storage_path, 60 * 60 * 24)
 
         os.remove(file_path)
