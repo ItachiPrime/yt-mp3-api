@@ -2,5 +2,5 @@ fastapi
 uvicorn
 pydantic
 yt-dlp
-supabase_py
+supabase
 python-multipart
