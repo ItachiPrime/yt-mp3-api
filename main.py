@@ -65,10 +65,15 @@ async def download_mp3(data: DownloadRequest):
 
     # Ensure the temporary directory exists
     os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Temporary directory '{output_dir}' ensured to exist.")
+
 
     # Path to a cookies file, useful for downloading age-restricted content
     # Make sure this file exists on your server (e.g., Render) if needed
     cookies_path = "./youtube_cookies.txt"
+    if not os.path.exists(cookies_path):
+        logger.warning(f"Cookies file not found at {cookies_path}. Some videos might not download.")
+
 
     # YoutubeDL options for downloading best audio and converting to MP3
     ydl_opts = {
@@ -84,33 +89,53 @@ async def download_mp3(data: DownloadRequest):
                 'key': 'FFmpegMetadata',      # Embed metadata (like title)
             }
         ],
-        'quiet': True,        # Suppress verbose output from yt-dlp
+        # 'quiet': True,      # Temporarily disabled for debugging
+        'verbose': True,    # Enable verbose output for debugging
         'noplaylist': True,   # Do not download entire playlists
         'cookiefile': cookies_path, # Use cookies for authentication/age-restricted content
     }
 
     downloaded_filepath = None # Initialize to None for error handling
     try:
+        logger.info(f"Attempting to download from URL: {url}")
         with YoutubeDL(ydl_opts) as ydl:
             # Extract information and download the video
             # 'download=True' will trigger the download and post-processing
             info = ydl.extract_info(url, download=True)
 
+            # Log the full info dictionary for debugging
+            logger.info(f"yt-dlp info dictionary: {info}")
+
             # Get the actual path of the downloaded and processed file.
             # This path already includes the output_dir and has the correct .mp3 extension.
             downloaded_filepath = info.get('filepath')
+            logger.info(f"yt-dlp reported downloaded_filepath: {downloaded_filepath}")
+
+            # Check files in the temp directory
+            temp_files = os.listdir(output_dir)
+            logger.info(f"Files in '{output_dir}' after yt-dlp execution: {temp_files}")
+
             if not downloaded_filepath or not os.path.exists(downloaded_filepath):
-                raise Exception("Failed to download or convert MP3. File path not found.")
+                # This is the exact error you received. Enhanced message for clarity.
+                raise Exception(
+                    "Failed to download or convert MP3. "
+                    "File path not found or doesn't exist. "
+                    "This often indicates missing FFmpeg or a post-processing failure."
+                )
 
             title = info.get("title", "Unknown Title") # Get video title, default if not found
 
             # Sanitize the base filename for safe storage in Supabase
             original_base_filename = os.path.basename(downloaded_filepath)
             final_storage_filename = sanitize_filename(original_base_filename)
+            logger.info(f"Original base filename: {original_base_filename}, Sanitized: {final_storage_filename}")
+
 
         # Construct the storage path within the Supabase bucket
         # e.g., "user_id/sanitized_song_title.mp3"
         storage_path = f"{user_id}/{final_storage_filename}"
+        logger.info(f"Attempting to upload '{downloaded_filepath}' to Supabase bucket '{SUPABASE_BUCKET}' at path '{storage_path}'")
+
 
         # Open the downloaded file in binary read mode
         with open(downloaded_filepath, "rb") as f:
@@ -123,15 +148,22 @@ async def download_mp3(data: DownloadRequest):
                     "x-upsert": "true"             # Allow overwriting
                 }
             )
+        logger.info(f"File '{downloaded_filepath}' successfully uploaded to Supabase.")
+
 
         # Create a signed URL for the uploaded file, valid for 24 hours
         signed_url_response = supabase.storage.from_(SUPABASE_BUCKET).create_signed_url(storage_path, 60 * 60 * 24)
+        logger.info(f"Supabase signed URL response: {signed_url_response}")
 
         signed_url = None
         if signed_url_response and signed_url_response.get("signedURL"):
             signed_url = signed_url_response.get("signedURL")
+            logger.info(f"Generated signed URL: {signed_url}")
         else:
-            print(f"Warning: Could not create signed URL for {storage_path}. Response: {signed_url_response}")
+            logger.warning(f"Could not create signed URL for {storage_path}. Response: {signed_url_response}")
+            # Even if signed URL fails, we can still return success if upload was fine,
+            # but log the warning. Or raise an error if signed URL is mandatory.
+            # For now, it's just a warning.
 
 
         # Return success response
@@ -143,7 +175,7 @@ async def download_mp3(data: DownloadRequest):
 
     except Exception as e:
         # Catch any exceptions during the process and return an error message
-        print(f"Error during download-mp3 process: {e}")
+        logger.error(f"Error during download-mp3 process: {e}", exc_info=True) # Log full traceback
         return {"status": "error", "message": str(e)}
 
     finally:
@@ -151,7 +183,8 @@ async def download_mp3(data: DownloadRequest):
         if downloaded_filepath and os.path.exists(downloaded_filepath):
             try:
                 os.remove(downloaded_filepath)
-                print(f"Cleaned up temporary file: {downloaded_filepath}")
+                logger.info(f"Cleaned up temporary file: {downloaded_filepath}")
             except OSError as e:
-                print(f"Error removing temporary file {downloaded_filepath}: {e}")
-
+                logger.error(f"Error removing temporary file {downloaded_filepath}: {e}")
+        else:
+            logger.info("No temporary file to clean up or file was not found.")
