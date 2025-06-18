@@ -4,6 +4,8 @@ from yt_dlp import YoutubeDL
 from supabase import create_client, Client
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import re
+import unicodedata
 
 SUPABASE_URL = "https://vydfyfhndunxxcfgbzje.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5ZGZ5ZmhuZHVueHhjZmdiemplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAyMzc5MjUsImV4cCI6MjA2NTgxMzkyNX0.PnBJsA4LKZO0QAFX1T8_Ps23HxLf2jj2OGuNrdUWZRI"  # Keep safe!
@@ -24,6 +26,15 @@ app.add_middleware(
 class DownloadRequest(BaseModel):
     url: str
     user_id: str
+
+def sanitize_filename(filename: str) -> str:
+    # Normalize Unicode characters (e.g., ã → a)
+    nfkd_form = unicodedata.normalize('NFKD', filename)
+    only_ascii = nfkd_form.encode('ASCII', 'ignore').decode()
+
+    # Replace spaces and illegal characters with dashes or underscores
+    clean = re.sub(r'[^\w\-_\.]', '_', only_ascii)
+    return clean
 
 @app.post("/download-mp3")
 def download_mp3(data: DownloadRequest):
@@ -57,10 +68,12 @@ def download_mp3(data: DownloadRequest):
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info).replace(".webm", ".mp3").replace(".m4a", ".mp3")
             title = info.get("title")
-            final_filename = os.path.basename(filename)
+            original_filename = os.path.basename(filename)
+            final_filename = sanitize_filename(original_filename)
 
         file_path = os.path.join(output_dir, final_filename)
         storage_path = f"{user_id}/{final_filename}"
+
 
         with open(file_path, "rb") as f:
             supabase.storage.from_(SUPABASE_BUCKET).upload(
