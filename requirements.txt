@@ -2,4 +2,4 @@ fastapi
 uvicorn
 pydantic
 yt-dlp
-supabase
+supabase-py
