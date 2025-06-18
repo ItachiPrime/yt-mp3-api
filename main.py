@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from yt_dlp import YoutubeDL
 from supabase import create_client, Client
+from fastapi.middleware.cors import CORSMiddleware
 import os
 
 SUPABASE_URL = "https://vydfyfhndunxxcfgbzje.supabase.co"
@@ -11,6 +12,14 @@ SUPABASE_BUCKET = "music"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080"],  # or ["*"] for all origins (not recommended in production)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class DownloadRequest(BaseModel):
     url: str
